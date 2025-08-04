@@ -1,0 +1,114 @@
+# personal_finance_tracker/app.py
+
+import sqlite3
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
+import datetime
+
+# Connect to database (or create if not exists)
+conn = sqlite3.connect('finance.db')
+cursor = conn.cursor()
+
+# Create transactions table
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT,
+    category TEXT,
+    amount REAL,
+    type TEXT,
+    notes TEXT
+)
+''')
+conn.commit()
+
+# Function to add transaction
+def add_transaction(date, category, amount, type_, notes):
+    cursor.execute("INSERT INTO transactions (date, category, amount, type, notes) VALUES (?, ?, ?, ?, ?)",
+                   (date, category, amount, type_, notes))
+    conn.commit()
+
+# Function to fetch data as DataFrame
+def get_transactions():
+    df = pd.read_sql_query("SELECT * FROM transactions", conn)
+    df['date'] = pd.to_datetime(df['date'])
+    return df
+
+# Function to generate dashboard
+def show_dashboard(df):
+    print("\n=== Expense Summary ===")
+    expense_df = df[df['type'] == 'expense']
+    print(expense_df.groupby('category')['amount'].sum())
+
+    # Monthly trend
+    df['month'] = df['date'].dt.to_period('M')
+    summary = df.groupby(['month', 'type'])['amount'].sum().unstack().fillna(0)
+    summary.plot(kind='bar', stacked=False)
+    plt.title('Monthly Income vs Expense')
+    plt.ylabel('Amount')
+    plt.tight_layout()
+    plt.show()
+
+# ML: Predict next month's expense using linear regression
+def predict_expense(df):
+    df = df.copy()
+    df = df[df['type'] == 'expense']
+    df['month'] = df['date'].dt.to_period('M')
+    monthly_expense = df.groupby('month')['amount'].sum().reset_index()
+    monthly_expense['month_num'] = range(len(monthly_expense))
+
+    X = monthly_expense[['month_num']]
+    y = monthly_expense['amount']
+
+    if len(X) < 2:
+        print("Not enough data to train model.")
+        return
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+    model = LinearRegression()
+    model.fit(X_train, y_train)
+
+    next_month = [[X['month_num'].max() + 1]]
+    predicted = model.predict(next_month)
+    print(f"\n[ML] Predicted expense for next month: ₹{predicted[0]:.2f}")
+
+# CLI Menu
+while True:
+    print("\n===== Personal Finance Tracker =====")
+    print("1. Add Transaction")
+    print("2. Show Dashboard")
+    print("3. Predict Next Month's Expense")
+    print("4. Exit")
+    choice = input("Enter your choice: ")
+
+    if choice == '1':
+        date = input("Date (YYYY-MM-DD): ")
+        category = input("Category (e.g. Food, Rent, Travel): ")
+        amount = float(input("Amount: "))
+        type_ = input("Type (income/expense): ")
+        notes = input("Notes: ")
+        add_transaction(date, category, amount, type_, notes)
+        print("Transaction added.")
+
+    elif choice == '2':
+        df = get_transactions()
+        if df.empty:
+            print("No transactions found.")
+        else:
+            show_dashboard(df)
+
+    elif choice == '3':
+        df = get_transactions()
+        if df.empty:
+            print("No transactions found.")
+        else:
+            predict_expense(df)
+
+    elif choice == '4':
+        print("Goodbye!")
+        break
+
+    else:
+        print("Invalid choice. Please try again.")
